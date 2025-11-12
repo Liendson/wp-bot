@@ -1,11 +1,18 @@
 import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import pino from "pino";
+import express from "express";
 import dotenv from "dotenv";
 import schedule from "node-schedule";
 import { getJIDByName, isMessageReply, isMessageValid, replyToSender, sendMessageToAllFromGroup, updateProfilePicture } from "./wp-bot.utils.js";
 
 dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 3000;
+
+app.get("/", (req, res) => res.send("🤖 Bot Baileys está online!"));
+app.listen(PORT, () => console.log(`Servidor web rodando na porta ${PORT}`));
 
 const onConnectionUpdate = (update, sock) => {
   const { connection, lastDisconnect, qr } = update;
@@ -22,8 +29,8 @@ const onConnectionUpdate = (update, sock) => {
   }
 
   if (connection === "open") {
-    // schedule.scheduleJob("*/1 * * * *", async () => updateProfilePicture(process.env.JID_SNAKE, "./src/images/torneios-calango.png"));s
-    schedule.scheduleJob("*/1 * * * *", async () => sendMessageToAllFromGroup(await getJIDByName("Grupo teste", sock), sock));
+    // schedule.scheduleJob("*/1 * * * *", async () => updateProfilePicture(process.env.JID_SNAKE, "./src/images/torneios-calango.png"));
+    schedule.scheduleJob("*/30 * * * *", async () => sendMessageToAllFromGroup(await getJIDByName("Grupo teste", sock), sock));
   }
 }
 
