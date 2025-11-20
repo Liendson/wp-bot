@@ -2,6 +2,7 @@ import fs from "fs";
 import { generateByPrompt } from "./ia.service.js";
 
 const sentMessages = new Set();
+const sentLists = {};
 
 /**
  * Obtém o JID do grupo de acordo com o nome informado, caso não exista, retorna null
@@ -70,9 +71,16 @@ export const isMessageReply = (msg) => {
 };
 
 /**
+ */
+export const isCommandMessage = (msg) => {
+  const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+  return text.includes("!!lista");
+};
+
+/**
  * Altera a imagem de capa de um grupo.
  *
- * @param {string} jid - JID do grupo a ter a imagem alterada
+ * @param {string} jid - JID do grupo
  * @param {string} urlImage - URL local da imagem
  */
 export const updateProfilePicture = async (jid, urlImage) => {
@@ -86,15 +94,15 @@ export const updateProfilePicture = async (jid, urlImage) => {
 /**
  * Envia uma mensagem em um grupo, marcando todos os participantes.
  *
- * @param {string} jid - JID do grupo a ter a imagem alterada
+ * @param {string} jid - JID do grupo
  * @param {object} sock - Instância atual do socket Baileys
  */
-export const sendMessageToAllFromGroup = async (jid, sock) => {
+export const sendReminderToAllFromGroup = async (jid, sock) => {
 
   const getCaption = () => {
     switch (new Date().getDay()) {
       case 6: return "BOM DIA BOM DIA! YUGINHO JOTAPINHO Passando pra avisar que SEXTOU! Amanhã tem torneio, lembre-se de colocar o nome na lista pra mostrar pra galera que o torneio vai bombar!";
-      default: return "Fala, Duelistas! YUGINHO JOTAPINHO Passando pra avisar que SÁBADO tem torneio! Lembre-se de colocar o nome na lista pra mostrar pra galera que o torneio vai bombar!";;
+      default: return "Fala, Duelistas! YUGINHO JOTAPINHO Passando pra avisar que SÁBADO tem torneio! Lembre-se de colocar o nome na lista pra mostrar pra galera que o torneio vai bombar!";
     }
   }
 
@@ -108,6 +116,42 @@ export const sendMessageToAllFromGroup = async (jid, sock) => {
   });
 }
 
+/**
+ * Envia uma mensagem em um grupo, marcando todos os participantes.
+ *
+ * @param {string} jid - JID do grupo
+ * @param {object} sock - Instância atual do socket Baileys
+ * @param {object} content - Objeto referente a mensagem, com os atributos necessários
+ */
+export const sendMessageToAllFromGroup = async (jid, sock, content) => {
+
+  const metadata = await sock.groupMetadata(jid);
+  const mentionedJid = metadata.participants.map(p => p.id);
+
+  await sendAndTrack(sock, jid, {
+    ...content,
+    contextInfo: { mentionedJid }
+  });
+}
+
+/**
+ * Envia uma mensagem em um grupo.
+ *
+ * @param {string} jid - JID do grupo
+ * @param {object} sock - Instância atual do socket Baileys
+ * @param {object} content - Objeto referente a mensagem, com os atributos necessários
+ */
+export const sendMessageToGroup = async (jid, sock, content) => {
+  await sendAndTrack(sock, jid, content);
+}
+
+/**
+ * Envia uma mensagem em um grupo, e guarda a mensagem enviada em uma lista para consulta posterior.
+ *
+ * @param {string} jid - JID do grupo
+ * @param {object} sock - Instância atual do socket Baileys
+ * @param {object} content - Objeto referente a mensagem, com os atributos necessários
+ */
 export const sendAndTrack = async (sock, jid, content) => {
   const sent = await sock.sendMessage(jid, content);
   if (sent?.key?.id) {
@@ -115,3 +159,44 @@ export const sendAndTrack = async (sock, jid, content) => {
   }
   return sent;
 };
+
+/**
+ * Verifica se a mensagem enviada é uma Lista de Presença do Torneio.
+ *
+ * @param {string} msg - Conteúdo da mensagem
+ */
+export const isTournamentList = (msg) => {
+  const padrao = /^Torneio\s+João\s+Pessoa\s*-\s*PB\s*-\s*(.+)$/im;
+  return padrao.test(msg);
+};
+
+/**
+ * Obtém, da lista salva, a ultima mensagem enviada referente a Lista de Torneio.
+ *
+ * @param {string} jid - JID do grupo
+ */
+export const getLastTournamentList = (jid) => {
+  const listas = sentLists[jid];
+  if (!listas || listas.length === 0) {
+    return null;
+  };
+
+  return listas.reduce((ultima, atual) => atual.timestamp > ultima.timestamp ? atual : ultima);
+};
+
+/**
+ * Verifica se a mensagem enviada é uma Lista de Presença do Torneio, caso sim, salva na memória para uso posterior.
+ *
+ * @param {string} jid - JID do grupo
+ */
+export const storeIfTournamentList = (msg, jid) => {
+  const text = msg.message.conversation || msg.message.extendedTextMessage?.text || "";
+  if (!text || !isTournamentList(text)) {
+    return
+  }
+
+  if (!sentLists[jid]) {
+    sentLists[jid] = [];
+  }
+  sentLists[jid].push({ text, timestamp: msg.messageTimestamp });
+}

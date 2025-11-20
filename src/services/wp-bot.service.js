@@ -1,58 +1,44 @@
-import makeWASocket, { useMultiFileAuthState, DisconnectReason, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
+import makeWASocket, { useMultiFileAuthState, fetchLatestBaileysVersion } from "@whiskeysockets/baileys";
 import qrcode from "qrcode-terminal";
 import pino from "pino";
-import express from "express";
 import dotenv from "dotenv";
-import schedule from "node-schedule";
-import { getJIDByName, isMessageReply, isMessageValid, replyToSender, sendMessageToAllFromGroup, updateProfilePicture } from "./wp-bot.utils.js";
+
+import { getJIDByName, getLastTournamentList, isCommandMessage, isMessageReply, isMessageValid, replyToSender, sendMessageToGroup, storeIfTournamentList } from "./wp-bot.utils.js";
 
 dotenv.config();
 
-const app = express();
-const PORT = process.env.PORT || 3000;
-
-app.get("/", (req, res) => res.send("🤖 Bot Baileys está online!"));
-app.listen(PORT, () => console.log(`Servidor web rodando na porta ${PORT}`));
-
-const onConnectionUpdate = (update, sock) => {
-  const { connection, lastDisconnect, qr } = update;
+const onConnectionUpdate = (update) => {
+  const { qr } = update;
 
   if (qr) {
     qrcode.generate(qr, { small: true });
   }
-
-  if (connection === "close") {
-    const reason = lastDisconnect?.error?.output?.statusCode;
-    if (reason !== DisconnectReason.loggedOut) {
-      startBot();
-    }
-  }
-
-  if (connection === "open") {
-    // schedule.scheduleJob("*/1 * * * *", async () => updateProfilePicture(process.env.JID_SNAKE, "./src/images/torneios-calango.png"));
-    schedule.scheduleJob("*/30 * * * *", async () => sendMessageToAllFromGroup(await getJIDByName("Grupo teste", sock), sock));
-  }
+  
 }
 
 const onMessageUpsert = async (msgUpdate, sock) => {
 
   const msg = msgUpdate.messages[0];
-  const from = msg.key.remoteJid;
+  const jid = await getJIDByName("Grupo teste", sock)
 
-  if (!isMessageValid(msgUpdate, from, sock)) {
+  if (!isMessageValid(msgUpdate, msg.key.remoteJid, sock)) {
     return;
   }
 
   if (isMessageReply(msg, sock)) {
     return replyToSender(msg, sock);
   }
-  
+
+  if (isCommandMessage(msg, sock) && getLastTournamentList(jid)) {
+    return await sendMessageToGroup(jid, sock, { text: getLastTournamentList(jid).text });
+  }
+
+  storeIfTournamentList(msg, jid);
 }
 
-export async function startBot() {
-  const { state, saveCreds } = await useMultiFileAuthState("./auth_info");
+export const startBot = async () => {
+  const { state } = await useMultiFileAuthState("./auth_info");
   const { version } = await fetchLatestBaileysVersion();
-
   const sock = makeWASocket({
     version,
     printQRInTerminal: true,
@@ -61,10 +47,23 @@ export async function startBot() {
     logger: pino({ level: "warn" }),
   });
 
-  console.log("📱 Conta conectada:", sock.user);
+  await new Promise((resolve, reject) => {
+    sock.ev.on("connection.update", (update) => {
+      const { connection, lastDisconnect } = update;
 
-  sock.ev.on("messages.upsert", (msgUpdate) => onMessageUpsert(msgUpdate, sock));
-  sock.ev.on("connection.update", (msgUpdate) => onConnectionUpdate(msgUpdate, sock));
-  sock.ev.on("creds.update", saveCreds);
+      if (connection === "open") {
+        resolve();
+      }
 
-}
+      if (connection === "close") {
+        const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== 401;
+
+        if (!shouldReconnect) {
+          reject("Não autenticado");
+        }
+      }
+    });
+  });
+
+  return sock;
+};
